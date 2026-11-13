@@ -13,7 +13,8 @@ A premium, Arabic-first (RTL) company website for the car rental brand **LEMOSIN
 | Fonts | Cairo (Arabic UI) + Marcellus (Latin wordmark) via `next/font` |
 | Motion | `motion/react` (scroll reveals, respects `prefers-reduced-motion`) |
 | Icons | `@phosphor-icons/react` |
-| Data | JSON files in `/data` (no database needed) |
+| Data | Cloudflare KV (Workers) or JSON files in `/data` elsewhere — no database |
+| Images (uploads) | Cloudflare R2 (Workers) or `public/uploads` elsewhere |
 | Admin auth | HMAC-signed session cookie (Node crypto) + edge middleware |
 
 ## Getting Started
@@ -50,6 +51,43 @@ The password never reaches the frontend — it is only compared server-side, and
 - **Settings** (`/admin/settings`) — WhatsApp number, phone, address, Google Maps embed URL, social links, and the homepage hero title/subtitle.
 - The floating WhatsApp button and every "احجز عبر واتساب" button use the number from Settings, with the car name pre-filled in the message.
 
+## Deploying to Cloudflare Workers
+
+The site runs on Cloudflare Workers via `@opennextjs/cloudflare` (`wrangler.jsonc` is committed at the repo root). Because Workers have **no writable filesystem**, storage is handled automatically:
+
+- **Data** (cars, settings) → Cloudflare **KV** namespace bound as `LEMOSINE_DATA`
+- **Uploaded images** → Cloudflare **R2** bucket bound as `LEMOSINE_UPLOADS` (served from the Worker at `/api/media/uploads/<name>`)
+- Locally (`npm run dev`) and on normal servers, the same code falls back to JSON files in `/data` and `public/uploads` — nothing to configure.
+
+### One-time setup in the Cloudflare dashboard
+
+1. **KV namespace** — *Storage & Databases → KV → Create namespace*, name it e.g. `lemosine-data`, copy its **ID**.
+2. **R2 bucket** — *Storage & Databases → R2 → Create bucket*, name it e.g. `lemosine-uploads`.
+3. Add both bindings to `wrangler.jsonc`:
+
+```jsonc
+"kv_namespaces": [
+  { "binding": "LEMOSINE_DATA", "id": "<KV_NAMESPACE_ID>" }
+],
+"r2_buckets": [
+  { "binding": "LEMOSINE_UPLOADS", "bucket_name": "lemosine-uploads" }
+],
+```
+
+4. Commit & push — Workers Builds redeploys automatically.
+
+### Worker environment variables
+
+Set these in *Workers & Pages → car-rental → Settings → Variables & Secrets*:
+
+| Variable | Value |
+|---|---|
+| `ADMIN_PASSWORD` | strong admin password |
+| `ADMIN_SESSION_SECRET` | long random string |
+| `NEXT_PUBLIC_SITE_URL` | `https://your-domain.com` (also used in sitemap/JSON-LD) |
+
+> Without the KV/R2 bindings the public site still deploys and renders with the seeded fleet, but admin saving/uploading returns a clear Arabic error instead.
+
 ## Content Notes (first version)
 
 - **Car photos** are open-license stock images (Unsplash) stored in `public/images/cars/` — replace them with the company's real fleet photos from the admin dashboard or by overwriting the files.
@@ -72,7 +110,8 @@ src/
   lib/
     i18n.js            # all site copy (Arabic dictionary — add "en" here later)
     seed.js            # sample fleet data
-    store.js           # JSON file store (/data/*.json)
+    store.js           # dual-backend store: Cloudflare KV or JSON files
+    cf-env.js          # Cloudflare bindings access (KV / R2)
     auth.js            # admin session (Node runtime)
     auth-edge.js       # session check for middleware (Web Crypto)
     validation.js      # server-side input validation

@@ -13,7 +13,7 @@ export default async function EditCarPage({ params }) {
   if (!(await isValidSession())) redirect('/admin/login');
 
   const { id } = await params;
-  const car = getCar(id);
+  const car = await getCar(id);
   if (!car) return <AdminNotFound />;
 
   return (

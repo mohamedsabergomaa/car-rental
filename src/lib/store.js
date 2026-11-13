@@ -1,77 +1,132 @@
 // ---------------------------------------------------------------------------
-// LEMOSINE — data store
-// Simple JSON-file store. Data lives in /data (cars.json, settings.json).
-// Files are seeded on first read, so replacing them (or editing through the
-// admin dashboard) is all that is needed to manage site content.
+// LEMOSINE — data store (dual backend)
+//
+//   • Cloudflare Workers  → KV namespace "LEMOSINE_DATA" (bound in wrangler.jsonc)
+//   • Everywhere else     → JSON files in /data (cars.json, settings.json)
+//
+// Data is seeded on first read, so a fresh deployment works out of the box.
 // ---------------------------------------------------------------------------
-import fs from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
+import { getCfEnv } from './cf-env';
 import { seedCars, seedSettings } from './seed';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const KV_CARS = 'cars';
+const KV_SETTINGS = 'settings';
 
-function ensureDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+function dataDir() {
+  return path.join(process.cwd(), 'data');
 }
 
-function readJson(file, fallback) {
-  ensureDir();
-  const filePath = path.join(DATA_DIR, file);
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, JSON.stringify(fallback, null, 2), 'utf8');
-    return fallback;
-  }
+async function readLocalJson(file, fallback) {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const raw = await fs.readFile(path.join(dataDir(), file), 'utf8');
+    return JSON.parse(raw);
   } catch {
     return fallback;
   }
 }
 
-function writeJson(file, data) {
-  ensureDir();
-  const filePath = path.join(DATA_DIR, file);
-  const tmp = filePath + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-  fs.renameSync(tmp, filePath);
+async function writeLocalJson(file, data) {
+  try {
+    await fs.mkdir(dataDir(), { recursive: true });
+    const tmp = path.join(dataDir(), file + '.tmp');
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
+    await fs.rename(tmp, path.join(dataDir(), file));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---- Cars ------------------------------------------------------------------
 
-export function getCars() {
-  return readJson('cars.json', seedCars);
+export async function getCars() {
+  const kv = (await getCfEnv())?.LEMOSINE_DATA;
+  if (kv) {
+    const data = await kv.get(KV_CARS, 'json');
+    if (Array.isArray(data)) return data;
+    await kv.put(KV_CARS, JSON.stringify(seedCars)); // first run on a fresh namespace
+    return seedCars;
+  }
+  return readLocalJson('cars.json', seedCars);
 }
 
-export function getCar(id) {
-  return getCars().find((c) => c.id === id) || null;
+export async function getCar(id) {
+  return (await getCars()).find((c) => c.id === id) || null;
 }
 
-export function getFeaturedCars() {
-  return getCars().filter((c) => c.featured);
+export async function getFeaturedCars() {
+  return (await getCars()).filter((c) => c.featured);
 }
 
-export function saveCar(car) {
-  const cars = getCars();
+// Can content be edited in this environment? (true on Cloudflare with KV bound,
+// and locally; false on serverless hosts without storage configured)
+export async function isStorageWritable() {
+  const kv = (await getCfEnv())?.LEMOSINE_DATA;
+  if (kv) return true;
+  return writeLocalJson('cars.json', await readLocalJson('cars.json', seedCars));
+}
+
+export async function saveCar(car) {
+  const kv = (await getCfEnv())?.LEMOSINE_DATA;
+  if (kv) {
+    const cars = await getCars();
+    const index = cars.findIndex((c) => c.id === car.id);
+    if (index >= 0) cars[index] = car;
+    else cars.push(car);
+    await kv.put(KV_CARS, JSON.stringify(cars));
+    return;
+  }
+
+  const cars = await readLocalJson('cars.json', seedCars);
   const index = cars.findIndex((c) => c.id === car.id);
   if (index >= 0) cars[index] = car;
   else cars.push(car);
-  writeJson('cars.json', cars);
+  if (!(await writeLocalJson('cars.json', cars))) {
+    throw new Error('STORAGE_UNAVAILABLE');
+  }
 }
 
-export function deleteCar(id) {
-  const cars = getCars();
+export async function deleteCar(id) {
+  const kv = (await getCfEnv())?.LEMOSINE_DATA;
+  if (kv) {
+    const cars = await getCars();
+    const next = cars.filter((c) => c.id !== id);
+    if (next.length === cars.length) return false;
+    await kv.put(KV_CARS, JSON.stringify(next));
+    return true;
+  }
+
+  const cars = await readLocalJson('cars.json', seedCars);
   const next = cars.filter((c) => c.id !== id);
   if (next.length === cars.length) return false;
-  writeJson('cars.json', next);
+  if (!(await writeLocalJson('cars.json', next))) {
+    throw new Error('STORAGE_UNAVAILABLE');
+  }
   return true;
 }
 
 // ---- Settings --------------------------------------------------------------
 
-export function getSettings() {
-  return readJson('settings.json', seedSettings);
+export async function getSettings() {
+  const kv = (await getCfEnv())?.LEMOSINE_DATA;
+  if (kv) {
+    const data = await kv.get(KV_SETTINGS, 'json');
+    if (data && typeof data === 'object') return data;
+    await kv.put(KV_SETTINGS, JSON.stringify(seedSettings));
+    return seedSettings;
+  }
+  return readLocalJson('settings.json', seedSettings);
 }
 
-export function saveSettings(settings) {
-  writeJson('settings.json', settings);
+export async function saveSettings(settings) {
+  const kv = (await getCfEnv())?.LEMOSINE_DATA;
+  if (kv) {
+    await kv.put(KV_SETTINGS, JSON.stringify(settings));
+    return;
+  }
+  if (!(await writeLocalJson('settings.json', settings))) {
+    throw new Error('STORAGE_UNAVAILABLE');
+  }
 }

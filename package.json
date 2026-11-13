@@ -9,6 +9,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "^1.0.0",
     "@phosphor-icons/react": "^2.1.7",
     "motion": "^12.15.0",
     "next": "^15.3.3",

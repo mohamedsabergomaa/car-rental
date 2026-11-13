@@ -20,7 +20,7 @@ export async function POST(request) {
   const result = validateCar(body);
   if (!result.ok) return NextResponse.json({ errors: result.errors }, { status: 422 });
 
-  const existing = getCar(result.car.id);
+  const existing = await getCar(result.car.id);
   if (existing) {
     return NextResponse.json(
       { errors: ['المعرّف (ID) مستخدم بالفعل — اختر معرّفاً آخر.'] },
@@ -28,6 +28,16 @@ export async function POST(request) {
     );
   }
 
-  saveCar(result.car);
+  try {
+    await saveCar(result.car);
+  } catch (err) {
+    if (err?.message === 'STORAGE_UNAVAILABLE') {
+      return NextResponse.json(
+        { errors: ['التخزين غير متوفر على هذا الخادم — لا يمكن حفظ التعديلات.'] },
+        { status: 503 }
+      );
+    }
+    throw err;
+  }
   return NextResponse.json({ ok: true, id: result.car.id }, { status: 201 });
 }

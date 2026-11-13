@@ -17,7 +17,7 @@ export async function PUT(request, { params }) {
   if (denied) return denied;
 
   const { id } = await params;
-  const existing = getCar(id);
+  const existing = await getCar(id);
   if (!existing) return NextResponse.json({ error: 'السيارة غير موجودة.' }, { status: 404 });
 
   let body;
@@ -30,7 +30,17 @@ export async function PUT(request, { params }) {
   const result = validateCar({ ...body, id }); // id cannot be changed while editing
   if (!result.ok) return NextResponse.json({ errors: result.errors }, { status: 422 });
 
-  saveCar(result.car);
+  try {
+    await saveCar(result.car);
+  } catch (err) {
+    if (err?.message === 'STORAGE_UNAVAILABLE') {
+      return NextResponse.json(
+        { errors: ['التخزين غير متوفر على هذا الخادم — لا يمكن حفظ التعديلات.'] },
+        { status: 503 }
+      );
+    }
+    throw err;
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -39,7 +49,18 @@ export async function DELETE(_request, { params }) {
   if (denied) return denied;
 
   const { id } = await params;
-  const deleted = deleteCar(id);
+  let deleted;
+  try {
+    deleted = await deleteCar(id);
+  } catch (err) {
+    if (err?.message === 'STORAGE_UNAVAILABLE') {
+      return NextResponse.json(
+        { error: 'التخزين غير متوفر على هذا الخادم — لا يمكن تنفيذ الحذف.' },
+        { status: 503 }
+      );
+    }
+    throw err;
+  }
   if (!deleted) return NextResponse.json({ error: 'السيارة غير موجودة.' }, { status: 404 });
 
   return NextResponse.json({ ok: true });

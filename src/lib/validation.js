@@ -7,7 +7,7 @@ export const TRANSMISSIONS = ['auto', 'manual'];
 export const FUELS = ['petrol', 'hybrid', 'electric', 'diesel'];
 
 const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const PATH_RE = /^\/(images|uploads)\/[\w\-./]+$/;
+const PATH_RE = /^\/(images|uploads)\/[\w\-./]+$|^\/api\/media\/[\w\-./]+$/;
 const URL_RE = /^https?:\/\/\S+$/;
 
 export function validateCar(body) {

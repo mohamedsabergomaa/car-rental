@@ -20,6 +20,16 @@ export async function PUT(request) {
   const result = validateSettings(body);
   if (!result.ok) return NextResponse.json({ errors: result.errors }, { status: 422 });
 
-  saveSettings({ ...getSettings(), ...result.settings });
+  try {
+    await saveSettings({ ...(await getSettings()), ...result.settings });
+  } catch (err) {
+    if (err?.message === 'STORAGE_UNAVAILABLE') {
+      return NextResponse.json(
+        { errors: ['التخزين غير متوفر على هذا الخادم — لا يمكن حفظ الإعدادات.'] },
+        { status: 503 }
+      );
+    }
+    throw err;
+  }
   return NextResponse.json({ ok: true });
 }
